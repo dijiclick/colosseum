@@ -1,15 +1,16 @@
-# KongreUzmani.com Web Crawler
+# Colosseum Profiles Crawler
 
-A Python web crawler that extracts Turkish medical/scientific congress event data from kongreuzmani.com and stores it in Supabase.
+A Python web crawler that extracts user profile data from [arena.colosseum.org/profiles](https://arena.colosseum.org/profiles) and stores it in Supabase.
 
 ## Features
 
 - 🔐 Authenticated crawling using browser cookies
+- 🤖 Playwright-based browser automation
 - 📊 Stores data in Supabase PostgreSQL database
-- 🔄 Automatic duplicate detection (skip existing events)
-- 📅 Configurable date range crawling
-- ⏱️ Polite crawling with rate limiting
-- 📝 Extracts: Title, Date, Venue, Website, Description
+- 🔄 Automatic duplicate detection (skip existing profiles)
+- 📝 Extracts comprehensive profile information including:
+  - Basic info: username, display name, tags, description, location, languages
+  - Detailed info: company, looking for teammates, project description, roles, topics, about section
 
 ## Quick Start
 
@@ -17,115 +18,118 @@ A Python web crawler that extracts Turkish medical/scientific congress event dat
 
 ```bash
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 ### 2. Set Up Supabase Database
 
 1. Go to your Supabase Dashboard
 2. Navigate to SQL Editor
-3. Run the contents of `setup_database.sql`
+3. Run the contents of `setup_colosseum_database.sql`
 
-### 3. Configure Cookies
+### 3. Configure Environment Variables
 
-1. Install a browser extension like "EditThisCookie" or "Cookie-Editor"
-2. Log in to kongreuzmani.com with your subscription
-3. Export all cookies as JSON
-4. Save as `cookies.json` in the project folder
+Create a `.env` file in the project root:
 
-### 4. Run the Crawler
+```env
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+```
+
+### 4. Configure Cookies
+
+1. Export your browser cookies from arena.colosseum.org
+2. Save the cookies JSON file (default path: `c:\Users\ariad\OneDrive\Desktop\colosium cookie.txt`)
+3. Or update the path in `colosseum_main.py` with `--cookies` argument
+
+### 5. Run the Crawler
 
 ```bash
-# Full crawl (Nov 2025 to Nov 2026)
-python main.py
+# Crawl 100 profiles
+python colosseum_main.py --limit 100
 
 # Dry run - see what would be scraped
-python main.py --dry-run
+python colosseum_main.py --dry-run
 
-# Specific month only
-python main.py --year 2025 --month aralik
+# Run in visible browser mode
+python colosseum_main.py --visible
 
-# Force re-scrape existing
-python main.py --no-skip-existing
+# Force re-scrape existing profiles
+python colosseum_main.py --no-skip-existing
 
 # Test database connection
-python main.py --test-db
+python colosseum_main.py --test-db
 ```
 
 ## Configuration
 
 Edit `config.py` to change:
-
-- `START_YEAR`, `START_MONTH`: Beginning of crawl range
-- `END_YEAR`, `END_MONTH`: End of crawl range
-- `REQUEST_DELAY`: Seconds between requests (default: 2)
-- `MAX_RETRIES`: Number of retry attempts
-- `TIMEOUT`: Request timeout in seconds
+- `SUPABASE_URL`: Your Supabase project URL
+- `SUPABASE_KEY`: Your Supabase anon key
+- Cookie file path can be specified via `--cookies` argument
 
 ## Data Extracted
 
-For each congress event:
+For each profile:
 
 | Field | Description |
 |-------|-------------|
-| title | Event name |
-| kongre_tarihi | Date (e.g., "16 Aralık - 20 Aralık 2025") |
-| kongre_yeri | Venue/Location |
-| kongre_web_sitesi | Official website URL |
-| davet | Description/invitation text |
-| source_url | Original URL |
-| year | Event year |
-| month | Event month (Turkish) |
+| username | Username (e.g., "@dopevelli") |
+| display_name | Display name |
+| description | Short description |
+| location | Location (e.g., "Toronto") |
+| tags | Array of role tags (JSONB) |
+| languages | Array of languages (JSONB) |
+| company | Company/organization |
+| looking_for_teammates | Boolean flag |
+| project_description | Project description from "Looking for teammates" |
+| i_am_a_roles | Array of user's roles (JSONB) |
+| looking_for_roles | Array of roles user is looking for (JSONB) |
+| interested_in_topics | Array of topics of interest (JSONB) |
+| about | Full about text |
+| profile_url | URL to profile page |
+| avatar_url | Avatar image URL |
+| source_url | Original URL where profile was found |
 
 ## File Structure
 
 ```
-kongreuzmani-crawler/
-├── .env                 # Supabase credentials
-├── cookies.json         # Browser cookies (you create this)
-├── requirements.txt     # Python dependencies
-├── config.py           # Configuration
-├── cookie_handler.py   # Cookie loading
-├── scraper.py          # Web scraping logic
-├── database.py         # Supabase operations
-├── main.py             # Entry point
-├── setup_database.sql  # SQL for table creation
-└── README.md           # This file
+colosseum-crawler/
+├── .env                      # Supabase credentials (not in git)
+├── .gitignore                # Git ignore rules
+├── requirements.txt               # Python dependencies
+├── config.py                 # Configuration
+├── colosseum_cookie_handler.py  # Cookie loading
+├── colosseum_scraper.py      # Playwright scraping logic
+├── colosseum_database.py     # Supabase operations
+├── colosseum_main.py         # Entry point
+├── setup_colosseum_database.sql  # SQL for table creation
+└── README.md                 # This file
 ```
 
 ## Troubleshooting
 
-### "401/403 Unauthorized" errors
+### "401 Unauthorized" errors
 - Your cookies have expired
 - Re-export cookies from browser after logging in
+- Make sure cookies are for both `arena.colosseum.org` and `api.colosseum.org`
 
 ### "Table does not exist" error
-- Run `setup_database.sql` in Supabase SQL Editor
+- Run `setup_colosseum_database.sql` in Supabase SQL Editor
 
-### Data not being extracted
-- Website HTML structure may have changed
-- Check the actual HTML and update selectors in `scraper.py`
+### Profiles not loading
+- The page uses JavaScript to load profiles dynamically
+- Wait time may need to be increased in `colosseum_scraper.py`
+- Check browser console for errors
 
-### Rate limiting
-- Increase `REQUEST_DELAY` in `config.py`
-- Add random delays between requests
+### Playwright not found
+- Run `playwright install chromium` after installing requirements
 
-## Turkish Month Reference
-
-| Turkish | English |
-|---------|---------|
-| ocak | January |
-| subat | February |
-| mart | March |
-| nisan | April |
-| mayis | May |
-| haziran | June |
-| temmuz | July |
-| agustos | August |
-| eylul | September |
-| ekim | October |
-| kasim | November |
-| aralik | December |
+### Clicking profiles not working
+- Profile detail extraction requires clicking on profile cards
+- This feature is being improved
+- Basic profile data is still extracted from listing cards
 
 ## License
 
-For personal use only. Respect kongreuzmani.com's terms of service.
+For personal use only. Respect Colosseum's terms of service.
