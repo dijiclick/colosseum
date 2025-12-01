@@ -1,11 +1,21 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Lazy initialization to avoid build-time errors
+let supabase: SupabaseClient | null = null;
+
+function getSupabase() {
+  if (!supabase) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (supabaseUrl && supabaseKey) {
+      supabase = createClient(supabaseUrl, supabaseKey);
+    }
+  }
+  return supabase;
+}
 
 type Profile = {
   id: number;
@@ -365,11 +375,17 @@ export default function Home() {
 
   useEffect(() => {
     async function fetchAll() {
+      const client = getSupabase();
+      if (!client) {
+        setError("Supabase not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.");
+        setLoading(false);
+        return;
+      }
       try {
         const all: Profile[] = [];
         let page = 0, hasMore = true;
         while (hasMore) {
-          const { data, error } = await supabase.from("colosseum_profiles").select("*").range(page * 1000, (page + 1) * 1000 - 1).order("id", { ascending: false });
+          const { data, error } = await client.from("colosseum_profiles").select("*").range(page * 1000, (page + 1) * 1000 - 1).order("id", { ascending: false });
           if (error) throw error;
           if (data && data.length > 0) { all.push(...data); setLoadingProgress(all.length); page++; hasMore = data.length === 1000; }
           else hasMore = false;
