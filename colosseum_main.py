@@ -48,7 +48,7 @@ Examples:
     parser.add_argument(
         '--cookies', 
         type=str, 
-        default=r"c:\Users\ariad\OneDrive\Desktop\colosium cookie.txt",
+        default=r"C:\Users\Administrator\Desktop\colosseum crawler\colosium cookie.txt",
         help='Path to cookies JSON file'
     )
     parser.add_argument(
@@ -123,27 +123,17 @@ Examples:
                 if len(cards) > 10:
                     print(f"  ... and {len(cards) - 10} more")
         else:
-            # Actual scraping
+            # Actual scraping with immediate save
             max_profiles = args.limit if hasattr(args, 'limit') and args.limit else None
-            profiles = scraper.scrape_all_profiles(existing_usernames, max_profiles=max_profiles)
             
-            if not profiles:
-                print("\nNo new profiles found to scrape.")
-                return 0
-            
-            print(f"\n{'=' * 60}")
-            print(f"  SCRAPING COMPLETE")
-            print(f"{'=' * 60}")
-            print(f"Found {len(profiles)} profiles to save")
-            print()
-            
-            # Save to database
+            # Track statistics
             total_inserted = 0
             total_updated = 0
             
-            for i, profile in enumerate(profiles, 1):
+            # Define save callback for immediate saving
+            def save_profile_immediately(profile):
+                nonlocal total_inserted, total_updated
                 username = profile.get("username", "Unknown")
-                print(f"[{i}/{len(profiles)}] Saving: {username}")
                 
                 # Check if it exists to determine insert vs update
                 if username in existing_usernames:
@@ -151,14 +141,22 @@ Examples:
                 else:
                     total_inserted += 1
                 
-                if db.insert_profile(profile):
-                    pass  # Success message already printed in insert_profile
-                else:
-                    print(f"    Failed to save {username}")
+                return db.insert_profile(profile)
+            
+            # Scrape with immediate save callback
+            profiles = scraper.scrape_all_profiles(
+                existing_usernames, 
+                max_profiles=max_profiles,
+                save_callback=save_profile_immediately
+            )
+            
+            if not profiles:
+                print("\nNo new profiles found to scrape.")
+                return 0
             
             # Print summary
             print(f"\n{'=' * 60}")
-            print("  SUMMARY")
+            print("  SCRAPING COMPLETE")
             print(f"{'=' * 60}")
             print(f"Total profiles scraped: {len(profiles)}")
             print(f"New profiles inserted: {total_inserted}")

@@ -7,6 +7,8 @@ Uses direct API calls to fetch profile data efficiently.
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, APIRequestContext
 import time
 from typing import Optional, List, Dict, Any
+from datetime import datetime
+import os
 
 from colosseum_cookie_handler import load_colosseum_cookies, get_colosseum_headers
 
@@ -14,7 +16,7 @@ from colosseum_cookie_handler import load_colosseum_cookies, get_colosseum_heade
 class ColosseumScraper:
     """Main scraper class using Playwright API requests"""
     
-    def __init__(self, cookies_file: str = r"c:\Users\ariad\OneDrive\Desktop\colosium cookie.txt", headless: bool = True):
+    def __init__(self, cookies_file: str = r"C:\Users\Administrator\Desktop\colosseum crawler\colosium cookie.txt", headless: bool = True):
         """
         Initialize the scraper.
         
@@ -30,6 +32,8 @@ class ColosseumScraper:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.api_context: Optional[APIRequestContext] = None
+        # Log file for API/debug information
+        self.log_file = "colosseum_api_errors.log"
     
     def start(self):
         """Start the browser and API context."""
@@ -74,6 +78,39 @@ class ColosseumScraper:
         if hasattr(self, 'playwright'):
             self.playwright.stop()
         print("Browser stopped")
+
+    def _log_api_error(self, source: str, url: str, status: int = None, error: str = "", response_text: str = "") -> None:
+        """
+        Append detailed API error information to a log file.
+
+        Args:
+            source: Which method logged this (e.g. 'fetch_profiles_list')
+            url: Full request URL (path with query)
+            status: HTTP status code (if available)
+            error: Python exception message (if any)
+            response_text: Optional response text/body (may be trimmed)
+        """
+        try:
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            # Make sure we log in the current working directory
+            log_path = os.path.join(os.getcwd(), self.log_file)
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"[{timestamp}] SOURCE: {source}\n")
+                f.write(f"URL: {url}\n")
+                if status is not None:
+                    f.write(f"STATUS: {status}\n")
+                if error:
+                    f.write(f"ERROR: {error}\n")
+                if response_text:
+                    # Avoid huge logs – limit to first 2000 characters
+                    trimmed = response_text[:2000]
+                    f.write("RESPONSE (truncated to 2000 chars):\n")
+                    f.write(trimmed + "\n")
+                f.write("\n")
+        except Exception:
+            # Do not crash the scraper if logging fails
+            pass
     
     def _build_cookie_header(self, cookies: List[Dict[str, Any]]) -> Dict[str, str]:
         """Build Cookie header string from cookies list."""
@@ -113,6 +150,19 @@ class ColosseumScraper:
             
             if response.status != 200:
                 print(f"  [ERROR] API returned status {response.status}")
+                # Log details for debugging (e.g. 401 at offset 1500)
+                body_text = ""
+                try:
+                    body_text = response.text()
+                except Exception as e:
+                    body_text = f"<failed to read response body: {e}>"
+                self._log_api_error(
+                    source="fetch_profiles_list",
+                    url=url,
+                    status=response.status,
+                    error="non-200 response",
+                    response_text=body_text,
+                )
                 return []
             
             data = response.json()
@@ -131,6 +181,12 @@ class ColosseumScraper:
             print(f"  [ERROR] Failed to fetch profiles: {e}")
             import traceback
             traceback.print_exc()
+            # Log exception
+            self._log_api_error(
+                source="fetch_profiles_list",
+                url=f"/api/users/profiles?queryStart=<dynamic>&limit={limit}&offset={offset}",
+                error=str(e),
+            )
             return []
     
     def fetch_profile_details(self, user_id: int) -> Optional[Dict[str, Any]]:
@@ -154,6 +210,19 @@ class ColosseumScraper:
             
             if response.status != 200:
                 print(f"  [ERROR] API returned status {response.status} for user {user_id}")
+                # Log details for debugging
+                body_text = ""
+                try:
+                    body_text = response.text()
+                except Exception as e:
+                    body_text = f"<failed to read response body: {e}>"
+                self._log_api_error(
+                    source="fetch_profile_details",
+                    url=url,
+                    status=response.status,
+                    error=f"non-200 response for user {user_id}",
+                    response_text=body_text,
+                )
                 return None
             
             data = response.json()
@@ -163,6 +232,12 @@ class ColosseumScraper:
             
         except Exception as e:
             print(f"  [ERROR] Failed to fetch profile details for user {user_id}: {e}")
+            # Log exception
+            self._log_api_error(
+                source="fetch_profile_details",
+                url=f"/api/v2/users/profile?id={user_id}",
+                error=str(e),
+            )
             return None
     
     def _normalize_profile_data(self, list_profile: Dict[str, Any], detail_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -371,13 +446,14 @@ class ColosseumScraper:
         cleaned.pop('element', None)
         return cleaned
     
-    def scrape_all_profiles(self, existing_usernames: set = None, max_profiles: int = None) -> List[Dict[str, Any]]:
+    def scrape_all_profiles(self, existing_usernames: set = None, max_profiles: int = None, save_callback=None) -> List[Dict[str, Any]]:
         """
         Scrape all profiles using the API directly.
         
         Args:
             existing_usernames: Set of usernames to skip
             max_profiles: Maximum number of profiles to scrape (None for all)
+            save_callback: Optional callback function(profile_dict) to save immediately
             
         Returns:
             List of complete profile data dictionaries
@@ -386,15 +462,16 @@ class ColosseumScraper:
             existing_usernames = set()
         
         profiles = []
+        saved_count = 0
         
         if not self.api_context:
             print("[ERROR] API context not initialized. Please call start() first.")
             return profiles
         
-        print("\n[OK] Using API to fetch profiles directly")
+        print("\n[OK] Using API to fetch profiles directly (max speed)")
         
-        # Fetch profiles with pagination
-        limit = 12  # API default limit
+        # Fetch profiles with pagination - use max limit for faster fetching
+        limit = 100  # Increased limit for faster fetching
         offset = 0
         total_fetched = 0
         
@@ -437,15 +514,25 @@ class ColosseumScraper:
                 detail_data = None
                 if user_id:
                     detail_data = self.fetch_profile_details(user_id)
-                    time.sleep(0.5)  # Small delay between API calls
+                    # No delay - maximum speed
                 
                 # Normalize and combine data
                 normalized_profile = self._normalize_profile_data(list_profile, detail_data)
                 
-                # Only add if we have a username
+                # Only process if we have a username
                 if normalized_profile.get("username"):
-                    profiles.append(self._clean_profile_data(normalized_profile))
-                    print(f"    [OK] Extracted profile data for {formatted_username}")
+                    cleaned_profile = self._clean_profile_data(normalized_profile)
+                    profiles.append(cleaned_profile)
+                    
+                    # Save immediately if callback provided
+                    if save_callback:
+                        if save_callback(cleaned_profile):
+                            saved_count += 1
+                            print(f"    [OK] Saved to database: {formatted_username}")
+                        else:
+                            print(f"    [ERROR] Failed to save: {formatted_username}")
+                    else:
+                        print(f"    [OK] Extracted profile data for {formatted_username}")
                 else:
                     print(f"    [ERROR] Failed to extract username for profile")
                 
@@ -462,8 +549,10 @@ class ColosseumScraper:
             
             # Move to next page
             offset += limit
-            time.sleep(1)  # Delay between pages
+            # No delay - maximum speed
         
         print(f"\n[OK] Successfully scraped {len(profiles)} new profiles")
+        if save_callback:
+            print(f"[OK] Saved {saved_count} profiles to database immediately")
         return profiles
 

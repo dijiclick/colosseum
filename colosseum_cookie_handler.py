@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from time import time
 
 
-def load_colosseum_cookies(filepath: str = r"c:\Users\ariad\OneDrive\Desktop\colosium cookie.txt") -> List[Dict[str, Any]]:
+def load_colosseum_cookies(filepath: str = r"C:\Users\Administrator\Desktop\colosseum crawler\colosium cookie.txt") -> List[Dict[str, Any]]:
     """
     Load cookies from JSON file and convert to Playwright format.
     Creates cookies for BOTH arena.colosseum.org and api.colosseum.org
@@ -119,7 +119,7 @@ def get_colosseum_headers() -> Dict[str, str]:
     }
 
 
-def check_cookie_expiry(filepath: str = r"c:\Users\ariad\OneDrive\Desktop\colosium cookie.txt") -> bool:
+def check_cookie_expiry(filepath: str = r"C:\Users\Administrator\Desktop\colosseum crawler\colosium cookie.txt") -> bool:
     """
     Check if cookies are still valid (not expired).
     

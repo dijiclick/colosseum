@@ -50,22 +50,44 @@ class ColosseumDatabase:
             
             if existing.data:
                 # Update existing record
-                self.client.table(self.table_name)\
+                result = self.client.table(self.table_name)\
                     .update(profile_data)\
                     .eq("username", username)\
                     .execute()
                 print(f"    Updated: {username}")
+                # Verify update succeeded
+                if result.data:
+                    print(f"    [VERIFIED] Update confirmed for {username}")
+                else:
+                    print(f"    [WARNING] Update returned no data for {username} - may be cached")
             else:
                 # Insert new record
-                self.client.table(self.table_name)\
+                result = self.client.table(self.table_name)\
                     .insert(profile_data)\
                     .execute()
                 print(f"    Inserted: {username}")
+                # Verify insert succeeded
+                if result.data:
+                    print(f"    [VERIFIED] Insert confirmed for {username}")
+                else:
+                    print(f"    [WARNING] Insert returned no data for {username} - may be cached")
+                    # Try to verify by querying
+                    verify = self.client.table(self.table_name)\
+                        .select("id")\
+                        .eq("username", username)\
+                        .execute()
+                    if verify.data:
+                        print(f"    [VERIFIED] Profile exists in database")
+                    else:
+                        print(f"    [ERROR] Profile NOT found in database after insert!")
+                        return False
             
             return True
             
         except Exception as e:
-            print(f"    Database error: {e}")
+            print(f"    [ERROR] Database error for {profile_data.get('username', 'unknown')}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _prepare_profile_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -82,7 +104,7 @@ class ColosseumDatabase:
             prepared.pop(field, None)
         
         # Fields that should be JSONB arrays
-        jsonb_fields = ['tags', 'languages', 'i_am_a_roles', 'looking_for_roles', 'interested_in_topics']
+        jsonb_fields = ['tags', 'languages', 'i_am_a_roles', 'looking_for_roles', 'interested_in_topics', 'account_roles', 'batches']
         
         for field in jsonb_fields:
             if field in prepared:
