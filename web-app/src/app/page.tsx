@@ -205,8 +205,9 @@ function MobileCard({ p, expanded, onToggle }: { p: Profile; expanded: boolean; 
   );
 }
 
-// Cache for filter options
-let filterOptionsCache: { countries: string[]; languages: string[]; locations: string[]; roles: string[]; topics: string[]; tags: string[]; companies: string[]; lookingFor: string[] } | null = null;
+// Filter options cache
+type FilterOptions = { countries: string[]; languages: string[]; locations: string[]; roles: string[]; topics: string[]; tags: string[]; companies: string[]; lookingFor: string[] };
+let filterOptionsCache: FilterOptions | null = null;
 
 export default function Home() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -219,7 +220,7 @@ export default function Home() {
   const [mobileSidebar, setMobileSidebar] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
-  const [filterOptions, setFilterOptions] = useState<typeof filterOptionsCache>({ countries: [], languages: [], locations: [], roles: [], topics: [], tags: [], companies: [], lookingFor: [] });
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ countries: [], languages: [], locations: [], roles: [], topics: [], tags: [], companies: [], lookingFor: [] });
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({ country: true, language: true });
   const togglePanel = (key: string) => setOpenPanels((prev) => ({ ...prev, [key]: !prev[key] }));
 
@@ -243,27 +244,24 @@ export default function Home() {
   const [sortField, setSortField] = useState<SortField>("id");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const listRef = useRef<HTMLDivElement>(null);
-  const PAGE_SIZE = 100;
+  const PAGE_SIZE = 200;
 
-  // Load filter options once (fast query for distinct values)
+  // Check if any array filters are active
+  const hasArrayFilters = selLanguages.length > 0 || selRoles.length > 0 || selTopics.length > 0 || 
+                          selTags.length > 0 || selLookingFor.length > 0 || selCountries.length > 0;
+
+  // Load filter options
   useEffect(() => {
     async function loadFilterOptions() {
-      if (filterOptionsCache) {
-        setFilterOptions(filterOptionsCache);
-        return;
-      }
+      if (filterOptionsCache) { setFilterOptions(filterOptionsCache); return; }
       const client = getSupabase();
       if (!client) return;
-
       try {
-        // Get a sample of data to extract filter options (faster than full scan)
-        const { data } = await client.from("colosseum_profiles").select("location,languages,i_am_a_roles,interested_in_topics,tags,company,looking_for_roles").limit(5000);
-        
+        const { data } = await client.from("colosseum_profiles").select("location,languages,i_am_a_roles,interested_in_topics,tags,company,looking_for_roles").limit(10000);
         if (data) {
           const countries = new Set<string>(), locations = new Set<string>(), languages = new Set<string>();
           const roles = new Set<string>(), topics = new Set<string>(), tags = new Set<string>();
           const companies = new Set<string>(), lookingFor = new Set<string>();
-
           data.forEach((p) => {
             const c = extractCountry(p.location); if (c) countries.add(c);
             if (p.location) locations.add(p.location);
@@ -274,7 +272,6 @@ export default function Home() {
             p.tags?.forEach((t: string) => tags.add(t));
             p.looking_for_roles?.forEach((r: string) => lookingFor.add(r));
           });
-
           filterOptionsCache = {
             countries: [...countries].sort(), locations: [...locations].sort(), languages: [...languages].sort(),
             roles: [...roles].sort(), topics: [...topics].sort(), tags: [...tags].sort(),
@@ -282,86 +279,83 @@ export default function Home() {
           };
           setFilterOptions(filterOptionsCache);
         }
-      } catch (e) {
-        console.error("Failed to load filter options", e);
-      }
+      } catch (e) { console.error("Failed to load filter options", e); }
     }
     loadFilterOptions();
   }, []);
 
-  // Build query with filters
-  const buildQuery = useCallback((client: SupabaseClient, countOnly = false) => {
-    let query = client.from("colosseum_profiles").select(countOnly ? "id" : "*", { count: countOnly ? "exact" : undefined });
+  // Client-side filter function for array fields
+  const passesArrayFilters = useCallback((p: Profile): boolean => {
+    if (selCountries.length && !selCountries.includes(extractCountry(p.location))) return false;
+    if (selLanguages.length && !p.languages?.some(l => selLanguages.includes(l))) return false;
+    if (selRoles.length && !p.i_am_a_roles?.some(r => selRoles.includes(r))) return false;
+    if (selTopics.length && !p.interested_in_topics?.some(t => selTopics.includes(t))) return false;
+    if (selTags.length && !p.tags?.some(t => selTags.includes(t))) return false;
+    if (selLookingFor.length && !p.looking_for_roles?.some(r => selLookingFor.includes(r))) return false;
+    return true;
+  }, [selCountries, selLanguages, selRoles, selTopics, selTags, selLookingFor]);
 
-    // Text search using ilike
-    if (search) {
-      query = query.or(`username.ilike.%${search}%,display_name.ilike.%${search}%,company.ilike.%${search}%,current_position.ilike.%${search}%,location.ilike.%${search}%,about.ilike.%${search}%`);
-    }
-
-    // Boolean filters
-    if (lookingTeam !== null) query = query.eq("looking_for_teammates", lookingTeam);
-    if (isStudent !== null) query = query.eq("is_university_student", isStudent);
-    if (hasGithub === true) query = query.not("github_handle", "is", null);
-    if (hasGithub === false) query = query.is("github_handle", null);
-    if (hasTwitter === true) query = query.not("twitter_handle", "is", null);
-    if (hasTwitter === false) query = query.is("twitter_handle", null);
-    if (hasTelegram === true) query = query.not("telegram_handle", "is", null);
-    if (hasTelegram === false) query = query.is("telegram_handle", null);
-    if (hasLinkedin === true) query = query.not("linkedin_handle", "is", null);
-    if (hasLinkedin === false) query = query.is("linkedin_handle", null);
-
-    // Array contains filters
-    if (selLanguages.length) query = query.overlaps("languages", selLanguages);
-    if (selRoles.length) query = query.overlaps("i_am_a_roles", selRoles);
-    if (selTopics.length) query = query.overlaps("interested_in_topics", selTopics);
-    if (selTags.length) query = query.overlaps("tags", selTags);
-    if (selLookingFor.length) query = query.overlaps("looking_for_roles", selLookingFor);
-
-    // Company filter
-    if (selCompanies.length) query = query.in("company", selCompanies);
-
-    // Location filters (need to handle with ilike for country)
-    if (selLocations.length) query = query.in("location", selLocations);
-
-    return query;
-  }, [search, lookingTeam, isStudent, hasGithub, hasTwitter, hasTelegram, hasLinkedin, selLanguages, selRoles, selTopics, selTags, selLookingFor, selCompanies, selLocations]);
-
-  // Fetch profiles with pagination
+  // Fetch profiles
   const fetchProfiles = useCallback(async (reset = false) => {
     const client = getSupabase();
     if (!client) { setError("Supabase not configured"); setLoading(false); return; }
 
-    if (reset) {
-      setLoading(true);
-      setProfiles([]);
-    } else {
-      setLoadingMore(true);
-    }
+    if (reset) { setLoading(true); setProfiles([]); }
+    else { setLoadingMore(true); }
 
     try {
-      const offset = reset ? 0 : profiles.length;
-      let query = buildQuery(client);
+      const currentProfiles = reset ? [] : profiles;
+      const offset = currentProfiles.length;
       
-      // Sorting
-      query = query.order(sortField, { ascending: sortOrder === "asc" });
-      
-      // Pagination
-      query = query.range(offset, offset + PAGE_SIZE - 1);
+      // Build query with only server-side compatible filters
+      let query = client.from("colosseum_profiles").select("*");
 
-      const { data, error, count } = await query;
-      if (error) throw error;
-
-      // Get total count for display
-      if (reset) {
-        const countQuery = buildQuery(client, true);
-        const { count: total } = await countQuery;
-        setTotalCount(total || 0);
+      // Text search
+      if (search) {
+        query = query.or(`username.ilike.%${search}%,display_name.ilike.%${search}%,company.ilike.%${search}%,current_position.ilike.%${search}%,location.ilike.%${search}%,about.ilike.%${search}%`);
       }
 
-      // Apply client-side country filter (Supabase can't filter by extracted country)
+      // Boolean filters (these work fine server-side)
+      if (lookingTeam !== null) query = query.eq("looking_for_teammates", lookingTeam);
+      if (isStudent !== null) query = query.eq("is_university_student", isStudent);
+      if (hasGithub === true) query = query.not("github_handle", "is", null);
+      if (hasGithub === false) query = query.is("github_handle", null);
+      if (hasTwitter === true) query = query.not("twitter_handle", "is", null);
+      if (hasTwitter === false) query = query.is("twitter_handle", null);
+      if (hasTelegram === true) query = query.not("telegram_handle", "is", null);
+      if (hasTelegram === false) query = query.is("telegram_handle", null);
+      if (hasLinkedin === true) query = query.not("linkedin_handle", "is", null);
+      if (hasLinkedin === false) query = query.is("linkedin_handle", null);
+
+      // Company filter (exact match works server-side)
+      if (selCompanies.length === 1) query = query.eq("company", selCompanies[0]);
+      else if (selCompanies.length > 1) query = query.in("company", selCompanies);
+
+      // Location filter (exact match)
+      if (selLocations.length === 1) query = query.eq("location", selLocations[0]);
+      else if (selLocations.length > 1) query = query.in("location", selLocations);
+
+      // Sorting and pagination
+      query = query.order(sortField, { ascending: sortOrder === "asc" });
+      
+      // If we have array filters, fetch more data to filter client-side
+      const fetchSize = hasArrayFilters ? PAGE_SIZE * 5 : PAGE_SIZE;
+      query = query.range(offset, offset + fetchSize - 1);
+
+      const { data, error: queryError } = await query;
+      if (queryError) throw queryError;
+
       let filteredData = data || [];
-      if (selCountries.length) {
-        filteredData = filteredData.filter(p => selCountries.includes(extractCountry(p.location)));
+      
+      // Apply client-side array filters
+      if (hasArrayFilters) {
+        filteredData = filteredData.filter(passesArrayFilters);
+      }
+
+      // Get total count
+      if (reset) {
+        const { count } = await client.from("colosseum_profiles").select("*", { count: "exact", head: true });
+        setTotalCount(count || 0);
       }
 
       if (reset) {
@@ -370,27 +364,27 @@ export default function Home() {
         setProfiles(prev => [...prev, ...filteredData]);
       }
       
-      setHasMore((data?.length || 0) === PAGE_SIZE);
+      setHasMore((data?.length || 0) === fetchSize);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Error");
+      console.error("Fetch error:", e);
+      setError(e instanceof Error ? e.message : "Error loading profiles");
     } finally {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [buildQuery, profiles.length, sortField, sortOrder, selCountries]);
+  }, [profiles, search, lookingTeam, isStudent, hasGithub, hasTwitter, hasTelegram, hasLinkedin, selCompanies, selLocations, sortField, sortOrder, hasArrayFilters, passesArrayFilters]);
 
-  // Initial load and filter change
+  // Fetch on filter change
   useEffect(() => {
     fetchProfiles(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, selCountries, selLocations, selLanguages, selRoles, selTopics, selTags, selCompanies, selLookingFor, lookingTeam, isStudent, hasGithub, hasTwitter, hasTelegram, hasLinkedin, sortField, sortOrder]);
 
   // Infinite scroll
   const handleScroll = useCallback(() => {
     if (!listRef.current || loadingMore || !hasMore) return;
     const { scrollTop, scrollHeight, clientHeight } = listRef.current;
-    if (scrollTop + clientHeight >= scrollHeight - 500) {
-      fetchProfiles(false);
-    }
+    if (scrollTop + clientHeight >= scrollHeight - 500) fetchProfiles(false);
   }, [fetchProfiles, loadingMore, hasMore]);
 
   const clearAll = () => {
@@ -418,14 +412,14 @@ export default function Home() {
           className="w-full h-8 px-3 bg-zinc-800 border border-zinc-700 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600" />
       </div>
       <div className="flex-1 overflow-y-auto">
-        <FilterPanel title="Country" options={filterOptions?.countries || []} selected={selCountries} onChange={setSelCountries} isOpen={openPanels.country || false} onToggle={() => togglePanel("country")} />
-        <FilterPanel title="Language" options={filterOptions?.languages || []} selected={selLanguages} onChange={setSelLanguages} isOpen={openPanels.language || false} onToggle={() => togglePanel("language")} />
-        <FilterPanel title="Location" options={filterOptions?.locations || []} selected={selLocations} onChange={setSelLocations} isOpen={openPanels.location || false} onToggle={() => togglePanel("location")} />
-        <FilterPanel title="Role" options={filterOptions?.roles || []} selected={selRoles} onChange={setSelRoles} isOpen={openPanels.role || false} onToggle={() => togglePanel("role")} />
-        <FilterPanel title="Interest" options={filterOptions?.topics || []} selected={selTopics} onChange={setSelTopics} isOpen={openPanels.topic || false} onToggle={() => togglePanel("topic")} />
-        <FilterPanel title="Skills" options={filterOptions?.tags || []} selected={selTags} onChange={setSelTags} isOpen={openPanels.tag || false} onToggle={() => togglePanel("tag")} />
-        <FilterPanel title="Company" options={filterOptions?.companies || []} selected={selCompanies} onChange={setSelCompanies} isOpen={openPanels.company || false} onToggle={() => togglePanel("company")} />
-        <FilterPanel title="Looking For" options={filterOptions?.lookingFor || []} selected={selLookingFor} onChange={setSelLookingFor} isOpen={openPanels.lookingFor || false} onToggle={() => togglePanel("lookingFor")} />
+        <FilterPanel title="Country" options={filterOptions.countries} selected={selCountries} onChange={setSelCountries} isOpen={openPanels.country || false} onToggle={() => togglePanel("country")} />
+        <FilterPanel title="Language" options={filterOptions.languages} selected={selLanguages} onChange={setSelLanguages} isOpen={openPanels.language || false} onToggle={() => togglePanel("language")} />
+        <FilterPanel title="Location" options={filterOptions.locations} selected={selLocations} onChange={setSelLocations} isOpen={openPanels.location || false} onToggle={() => togglePanel("location")} />
+        <FilterPanel title="Role" options={filterOptions.roles} selected={selRoles} onChange={setSelRoles} isOpen={openPanels.role || false} onToggle={() => togglePanel("role")} />
+        <FilterPanel title="Interest" options={filterOptions.topics} selected={selTopics} onChange={setSelTopics} isOpen={openPanels.topic || false} onToggle={() => togglePanel("topic")} />
+        <FilterPanel title="Skills" options={filterOptions.tags} selected={selTags} onChange={setSelTags} isOpen={openPanels.tag || false} onToggle={() => togglePanel("tag")} />
+        <FilterPanel title="Company" options={filterOptions.companies} selected={selCompanies} onChange={setSelCompanies} isOpen={openPanels.company || false} onToggle={() => togglePanel("company")} />
+        <FilterPanel title="Looking For" options={filterOptions.lookingFor} selected={selLookingFor} onChange={setSelLookingFor} isOpen={openPanels.lookingFor || false} onToggle={() => togglePanel("lookingFor")} />
         <div className="p-3 border-t border-zinc-800">
           <div className="text-xs text-zinc-500 uppercase mb-2 font-medium">Status</div>
           <div className="flex flex-wrap gap-1.5">
@@ -446,7 +440,11 @@ export default function Home() {
 
   if (error) return (
     <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-      <div className="bg-red-500/10 border border-red-500/20 rounded p-4 text-red-400 text-sm">{error}</div>
+      <div className="bg-red-500/10 border border-red-500/20 rounded p-4 text-red-400 text-sm max-w-md">
+        <div className="font-medium mb-2">Error</div>
+        <div>{error}</div>
+        <button onClick={() => { setError(null); fetchProfiles(true); }} className="mt-3 px-3 py-1 bg-zinc-800 rounded text-xs hover:bg-zinc-700">Retry</button>
+      </div>
     </div>
   );
 

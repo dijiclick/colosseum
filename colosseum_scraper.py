@@ -446,7 +446,39 @@ class ColosseumScraper:
         cleaned.pop('element', None)
         return cleaned
     
-    def scrape_all_profiles(self, existing_usernames: set = None, max_profiles: int = None, save_callback=None) -> List[Dict[str, Any]]:
+    def _discover_total_count(self, limit: int = 100) -> int:
+        """
+        Discover the total number of profiles by fetching until the end.
+        
+        Args:
+            limit: Number of profiles per page
+            
+        Returns:
+            Total number of profiles (approximate, based on last offset)
+        """
+        print("\n[INFO] Discovering total profile count...")
+        offset = 0
+        last_valid_offset = 0
+        
+        while True:
+            list_profiles = self.fetch_profiles_list(limit=limit, offset=offset)
+            
+            if not list_profiles:
+                break
+            
+            last_valid_offset = offset
+            offset += limit
+            
+            # If we got fewer than requested, we're at the end
+            if len(list_profiles) < limit:
+                last_valid_offset += len(list_profiles)
+                break
+        
+        total_approx = last_valid_offset + (limit if last_valid_offset > 0 else 0)
+        print(f"[OK] Estimated total profiles: ~{total_approx} (last offset: {last_valid_offset})")
+        return total_approx
+    
+    def scrape_all_profiles(self, existing_usernames: set = None, max_profiles: int = None, save_callback=None, reverse: bool = False) -> List[Dict[str, Any]]:
         """
         Scrape all profiles using the API directly.
         
@@ -454,6 +486,7 @@ class ColosseumScraper:
             existing_usernames: Set of usernames to skip
             max_profiles: Maximum number of profiles to scrape (None for all)
             save_callback: Optional callback function(profile_dict) to save immediately
+            reverse: If True, start from the last user ID and work backwards
             
         Returns:
             List of complete profile data dictionaries
@@ -468,22 +501,44 @@ class ColosseumScraper:
             print("[ERROR] API context not initialized. Please call start() first.")
             return profiles
         
-        print("\n[OK] Using API to fetch profiles directly (max speed)")
+        if reverse:
+            print("\n[OK] Using API to fetch profiles in REVERSE order (from last to first)")
+        else:
+            print("\n[OK] Using API to fetch profiles directly (max speed)")
         
         # Fetch profiles with pagination - use max limit for faster fetching
         limit = 100  # Increased limit for faster fetching
-        offset = 0
-        total_fetched = 0
+        
+        if reverse:
+            # First, discover the total count
+            total_approx = self._discover_total_count(limit=limit)
+            
+            # Start from the last page and work backwards
+            # Calculate starting offset (approximate)
+            start_offset = max(0, total_approx - limit)
+            offset = start_offset
+            total_fetched = 0
+            direction = -1  # Going backwards
+        else:
+            # Normal forward pagination
+            offset = 0
+            total_fetched = 0
+            direction = 1  # Going forwards
         
         while True:
             # Fetch a page of profiles
             list_profiles = self.fetch_profiles_list(limit=limit, offset=offset)
             
             if not list_profiles:
-                print(f"\n[OK] No more profiles to fetch (fetched {total_fetched} total)")
-                break
+                if reverse:
+                    # If we're going backwards and hit empty, we've reached the beginning
+                    print(f"\n[OK] Reached beginning (fetched {total_fetched} total)")
+                    break
+                else:
+                    print(f"\n[OK] No more profiles to fetch (fetched {total_fetched} total)")
+                    break
             
-            print(f"\nProcessing {len(list_profiles)} profiles from API...")
+            print(f"\nProcessing {len(list_profiles)} profiles from API (offset: {offset})...")
             
             # Process each profile
             for list_profile in list_profiles:
@@ -544,11 +599,21 @@ class ColosseumScraper:
             
             # Check if we got fewer profiles than requested (last page)
             if len(list_profiles) < limit:
-                print(f"\n[OK] Reached last page (got {len(list_profiles)} profiles, expected {limit})")
+                if reverse:
+                    print(f"\n[OK] Reached beginning (got {len(list_profiles)} profiles, expected {limit})")
+                else:
+                    print(f"\n[OK] Reached last page (got {len(list_profiles)} profiles, expected {limit})")
                 break
             
-            # Move to next page
-            offset += limit
+            # Move to next/previous page
+            if reverse:
+                offset -= limit
+                if offset < 0:
+                    # If we go negative, we've reached the beginning
+                    print(f"\n[OK] Reached beginning (offset would be negative)")
+                    break
+            else:
+                offset += limit
             # No delay - maximum speed
         
         print(f"\n[OK] Successfully scraped {len(profiles)} new profiles")

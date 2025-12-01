@@ -17,6 +17,7 @@ def main():
         epilog="""
 Examples:
   python colosseum_main.py                           # Full crawl
+  python colosseum_main.py --reverse                 # Start from last user ID and work backwards
   python colosseum_main.py --dry-run                 # See what would be scraped
   python colosseum_main.py --headless                # Run in headless mode
   python colosseum_main.py --no-skip-existing       # Re-scrape existing profiles
@@ -60,6 +61,11 @@ Examples:
         '--limit', 
         type=int,
         help='Maximum number of profiles to scrape (default: all)'
+    )
+    parser.add_argument(
+        '--reverse', 
+        action='store_true',
+        help='Start from the last user ID and work backwards to the first'
     )
     
     args = parser.parse_args()
@@ -147,7 +153,8 @@ Examples:
             profiles = scraper.scrape_all_profiles(
                 existing_usernames, 
                 max_profiles=max_profiles,
-                save_callback=save_profile_immediately
+                save_callback=save_profile_immediately,
+                reverse=args.reverse
             )
             
             if not profiles:
